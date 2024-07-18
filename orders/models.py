@@ -4,6 +4,7 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 from products.models import Product
+from .shared.enum.order_status import OrderStatusEnum
 
 
 class Order(models.Model):
@@ -70,6 +71,20 @@ class OrderDetail(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
+
+
+class OrderStatus(models.Model):
+    id = models.AutoField(primary_key=True)
+    status = models.CharField(max_length=20, choices=OrderStatusEnum.choices)
+    reason = models.CharField(max_length=255)
+    product_id = models.ForeignKey(Product, on_delete=models.CASCADE, null=False)
+    user_id = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=False)
+    order_id = models.ForeignKey(Order, on_delete=models.CASCADE, null=False)
+    o_detail_id = models.ForeignKey(OrderDetail, on_delete=models.CASCADE, null=False)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
 
 
 @receiver([post_save, post_delete], sender=OrderDetail)
