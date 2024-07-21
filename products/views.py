@@ -6,7 +6,7 @@ from backend_ecommerce.helpers import custom_response, parse_request
 from .models import Category, Product, ProductImage, ProductComment
 from .serializers import CategorySerializer, ProductSerializer, ProductImageSerializer, ProductCommentSerializer
 from filter_and_pagination import FilterPagination
-
+from django.core.paginator import Paginator, PageNotAnInteger, EmptyPage
 User = get_user_model()
 
 
@@ -72,7 +72,7 @@ class CategoryDetailAPIView(views.APIView):
 
 
 class ProductViewAPI(views.APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [AllowAny] 
 
     def get(self, request):
         try:
@@ -288,3 +288,60 @@ class ProductCommentDetailAPIView(views.APIView):
                                    204)
         except:
             return custom_response('Delete product comment failed!', 'Error', "Product comment not found!", 400)
+
+# example API for testing : http://127.0.0.1:8000/api/v1/filter?category_id=49&order_by=price&order_type=asc&price__gte=0.1&price__lte=0.6&name=Possible main American
+class ProductFilterViewAPI(views.APIView):
+    permission_classes = [AllowAny]
+    def get(self, request):
+        try:
+            base_queryset = Product.objects.filter(is_public=True, amount__gt=0)
+            filtered_queryset = self.filter_and_paginate(request, base_queryset)
+            serialize_data = ProductSerializer(filtered_queryset['queryset'], many=True).data
+            result_set = {'list': serialize_data, 'pagination': filtered_queryset['pagination']}
+            return custom_response('Get products successfully!', 'Success', result_set, 200)
+        except Exception as e:
+            return custom_response('Get product failed!', 'Error', [str(e)], 400)
+
+    def filter_and_paginate(self, request, queryset):
+        price_gte = request.GET.get('price__gte')
+        price_lte = request.GET.get('price__lte')
+        category_id = request.GET.get('category_id')
+        name = request.GET.get('name')
+
+        if price_gte:
+            queryset = queryset.filter(price__gte=float(price_gte))
+        if price_lte:
+            queryset = queryset.filter(price__lte=float(price_lte))
+        if category_id:
+            queryset = queryset.filter(category_id=int(category_id))
+        if name:
+            queryset = queryset.filter(name__icontains=name)
+
+        # SORT
+        order_by_field = request.GET.get('order_by', 'id')
+        order_type = request.GET.get('order_type', 'desc')
+        order_by = order_by_field if order_type == 'asc' else '-' + order_by_field
+        queryset = queryset.order_by(order_by)
+
+        # PANIGATE
+        per_page = int(request.GET.get('per_page', 20))
+        page_no = int(request.GET.get('page_no', 1))
+
+        paginator = Paginator(queryset, per_page)
+        try:
+            page = paginator.page(page_no)
+        except PageNotAnInteger:
+            page = paginator.page(1)
+        except EmptyPage:
+            page = paginator.page(paginator.num_pages)
+
+        dataset = {
+            'queryset': page.object_list,
+            'pagination': {
+                'per_page': per_page,
+                'current_page': page_no,
+                'total_count': paginator.count,
+                'total_pages': paginator.num_pages
+            }
+        }
+        return dataset
