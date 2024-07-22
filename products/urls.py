@@ -13,4 +13,6 @@ urlpatterns = [
     
     path("product/", views.ProductViewAPI.as_view()),
     path("product/<slug:id_slug>/", views.ProductDetailAPIView.as_view()),
+
+    path("wishlist/check/", views.WishlistCheckAPIView.as_view()),
 ]

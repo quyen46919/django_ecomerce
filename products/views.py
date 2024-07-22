@@ -288,3 +288,30 @@ class ProductCommentDetailAPIView(views.APIView):
                                    204)
         except:
             return custom_response('Delete product comment failed!', 'Error', "Product comment not found!", 400)
+class WishlistCheckAPIView(views.APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            product_ids = request.query_params.getlist('product_ids')
+            if not product_ids:
+                return custom_response('Product IDs not provided!', 'Error', None, 400)
+
+            product_ids = [int(pid) for pid in product_ids]
+            products = Product.objects.filter(id__in=product_ids, amount__gt=0, is_public=True)
+            serialize_data = ProductSerializer(products, many=True).data
+
+            # check product 
+            available_products = Product.objects.filter(id__in=product_ids, amount__gt=0, is_public=True)
+            unavailable_products = Product.objects.filter(id__in=product_ids).exclude(amount__gt=0, is_public=True)
+
+            available_serialize_data = ProductSerializer(available_products, many=True).data
+            unavailable_serialize_data = ProductSerializer(unavailable_products, many=True).data
+
+            result_set = {
+                'available_products': available_serialize_data,
+                'unavailable_products': unavailable_serialize_data
+            }
+            return custom_response('Products checked successfully!', 'Success', result_set, 200)
+        except Exception as e:
+            return custom_response('Product check failed!', 'Error', [str(e)], 400)
