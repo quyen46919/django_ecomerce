@@ -1,12 +1,13 @@
 from rest_framework import views
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from backend_ecommerce.helpers import custom_response, parse_request
 from django.http import Http404
 from django.contrib.auth import get_user_model
-from .models import Order, OrderDetail
-from .serializers import OrderSerializer, OrderDetailSerializer
+from .models import Order, OrderDetail, OrderStatus
+from .serializers import OrderSerializer, OrderDetailSerializer, OrderStatusSerializer
 from products.models import Product
-from .utils import make_paypal_payment, verify_paypal_payment
+from .shared.enum.order_status import OrderStatusEnum
+from .utils import make_paypal_payment, verify_paypal_payment, refund_paypal_payment
 from decouple import config
 
 User = get_user_model()
@@ -141,6 +142,116 @@ class OrderDetailWithProductDetailAPIView(views.APIView):
             return custom_response('Delete order detail successfully!', 'Success', {"order_detail_id": id_slug}, 204)
         except:
             return custom_response('Delete order detail failed!', 'Error', "Order detail not found!", 400)
+
+
+class OrderStatusAPIView(views.APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            o_statuses = OrderStatus.objects.all()
+            serializers = OrderStatusSerializer(o_statuses, many=True)
+            return custom_response('Get all orders status successfully!', 'Success', serializers.data, 200)
+        except:
+            return custom_response('Get all orders status failed!', 'Error', None, 400)
+
+    
+    def post(self, request):
+        try:
+            data = parse_request(request)
+            o_detail = OrderDetail.objects.get(id=data['o_detail_id'])
+            order = o_detail.order_id  
+            o_status = OrderStatus(
+                status=data['status'],
+                reason=data['reason'],
+                product_id=o_detail.product_id,
+                user_id=order.user_id,
+                order_id=o_detail.order_id,
+                o_detail_id=o_detail
+            )
+            o_status.save()
+            serializer = OrderStatusSerializer(o_status)
+            return custom_response('Create order status successfully!', 'Success', serializer.data, 201)
+        except Exception as e:
+            return custom_response('Create order status failed!', 'Error', [str(e)], 400)
+
+
+class OrderCancelStatusAPIView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            o_statuses = OrderStatus.objects.filter(status=OrderStatusEnum.CANCELLED, user_id=user)
+            serializers = OrderStatusSerializer(o_statuses, many=True)
+            return custom_response('Get all orders cancelled status successfully!', 'Success', serializers.data, 200)
+        except:
+            return custom_response('Get all orders status failed!', 'Error', None, 400)
+
+
+class OrderStatusDetailAPIView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, id_slug):
+        try:
+            return OrderStatus.objects.get(id=id_slug)
+        except:
+            raise Http404
+            
+
+    def patch(self, request, id_slug):
+        try: 
+            data = parse_request(request)
+            user = request.user
+            o_status = OrderStatus.objects.get(id=id_slug, user_id=user.id)
+
+            if o_status.status != OrderStatusEnum.PENDING:
+                return custom_response('Only orders with pending status can be updated.', 'Error', None, 403)
+
+            if o_status:
+                new_status = data.get('status', o_status.status)  
+                o_status.reason = data.get('reason', o_status.reason)  
+
+                if new_status:  
+                    o_status.status = OrderStatusEnum[new_status.upper()]
+
+                if o_status.status == OrderStatusEnum.CANCELLED:  
+                    order = Order.objects.get(id=o_status.order_id.id)
+                    # Check here for refund logic if payment has been made 
+                    if order.is_paid:
+                        refund_amount = order.total * 0.7
+                        order.total = refund_amount
+                        order.save()  
+                        success, message = refund_paypal_payment(
+                            order_id=order.id,amount=refund_amount, 
+                            currency='USD',
+                            return_url=config('FE_DOMAIN') + '/order-completed',
+                            cancel_url=config('FE_DOMAIN') + '/order-cancelled'
+                        )
+                        if not success:
+                            custom_response(f'Failed to process refund', status='Error', data=None, status_code=500 )
+
+                    o_status.save()  
+                    serializers = OrderStatusSerializer(o_status)  
+                    return custom_response('Updated order status successfully!', 'Success', serializers.data, 200)
+                else:  
+                    return custom_response('', 'Error', None, 403)
+            
+        except OrderStatus.DoesNotExist:  
+            return custom_response('Order status not found.', 'Error', None, 404)  
+        except Order.DoesNotExist:
+            return custom_response('Order not found.', 'Error', None, 404)  
+        except Exception as e:  
+            return custom_response(f'An error occurred: {str(e)}', 'Error', None, 400)  
+
+
+    def delete(self, request, id_slug):
+        try:
+            o_status = self.get_object(id_slug)
+            o_status.delete()
+            return custom_response('Delete order status successfully!', 'Success', {"order_status_id": id_slug}, 204)
+        except:
+            return custom_response('Delete order status failed!', 'Error', "Order status not found!", 400)
 
 
 class OrderCheckoutAPIView(views.APIView):
